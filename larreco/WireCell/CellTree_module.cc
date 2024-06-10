@@ -11,6 +11,8 @@
 #include "lardataobj/RecoBase/OpHit.h"
 #include "lardataobj/RecoBase/PointCharge.h"
 #include "lardataobj/RecoBase/SpacePoint.h"
+#include "lardataobj/RecoBase/PFParticle.h"
+#include "lardataobj/RecoBase/Vertex.h"
 #include "lardataobj/RecoBase/Wire.h"
 #include "lardataobj/Simulation/SimChannel.h"
 #include "lardataobj/Simulation/SimEnergyDeposit.h"
@@ -25,6 +27,7 @@
 #include "art/Framework/Principal/Handle.h"
 #include "art/Framework/Services/Registry/ServiceHandle.h"
 #include "canvas/Persistency/Common/FindOneP.h"
+#include "canvas/Persistency/Common/FindManyP.h"
 #include "fhiclcpp/ParameterSet.h"
 #include "messagefacility/MessageLogger/MessageLogger.h"
 
@@ -64,6 +67,7 @@ namespace wc {
     void initOutput();
     void printEvent();
     void print_vector(ostream& out, vector<double>& v, TString desc, bool end = false);
+    void print_vector(ostream& out, vector<int>& v, TString desc, bool end = false);
 
     void processRaw(const art::Event& evt);
     void processCalib(const art::Event& evt);
@@ -87,7 +91,8 @@ namespace wc {
     double KE(float* momentum); // KE
     TString PDGName(int pdg);
     bool DumpMCJSON(int id, ostream& out);
-    void DumpMCJSON(ostream& out = cout);
+    void DumpMCJSON(const art::Event& event, ostream& out = cout);
+    bool DumpNeutrino(const art::Event& event, std::vector<int> &primaries, ostream& out = cout);
 
     // the parameters we'll read from the .fcl
     std::string fRawDigitLabel;
@@ -378,7 +383,7 @@ namespace wc {
 
     if (fSaveJSON) {
       gSystem->ChangeDirectory("bee");
-      system("zip -r bee_upload data");
+      system("tar czf bee_upload.tar.gz data");
       gSystem->ChangeDirectory("..");
     }
   }
@@ -426,7 +431,7 @@ namespace wc {
         TString jsonfile;
         jsonfile.Form("bee/data/%i/%i-mc.json", entryNo, entryNo);
         std::ofstream out(jsonfile.Data());
-        DumpMCJSON(out);
+        DumpMCJSON(event, out);
         out.close();
       }
     }
@@ -801,8 +806,12 @@ namespace wc {
         return;
       }
     }
+
+    const art::FindManyP<recob::PFParticle> PFParticlesFromSpacePoints(sp_handle, event, option.Data());
+
     double x = 0, y = 0, z = 0, q = 0, nq = 1;
     vector<double> vx, vy, vz, vq, vnq;
+    vector<int> pfps;
 
     for (uint i = 0; i < sps.size(); i++) {
       // cout << sp->XYZ()[0] << ", " << sp->XYZ()[1] << ", " << sp->XYZ()[2] << endl;
@@ -813,11 +822,33 @@ namespace wc {
       else {
         q = 0;
       }
+
+      const art::Ptr<recob::PFParticle> pfp = PFParticlesFromSpacePoints.at(i).at(0);
+      int pfp_id = pfp->Self();
+
       vx.push_back(x);
       vy.push_back(y);
       vz.push_back(z);
       vq.push_back(q);
       vnq.push_back(nq);
+      pfps.push_back(pfp_id);
+    }
+
+    //Get the vertex
+    art::Handle<std::vector<recob::PFParticle>> inputPFPHandle = event.getHandle< std::vector<recob::PFParticle> >(option.Data());
+    double xyz[3] = {0.0, 0.0, 0.0};
+    if(inputPFPHandle){
+      const art::FindManyP<recob::Vertex> VertexFromPFParticle(inputPFPHandle, event, option.Data());
+      for(uint i = 0; i < inputPFPHandle->size(); i++){
+          const recob::PFParticle& pfp = inputPFPHandle->at(i);
+          if(pfp.IsPrimary()){
+            std::vector<art::Ptr<recob::Vertex>> vertices = VertexFromPFParticle.at(i);
+            if(vertices.size() > 0){
+              const art::Ptr<recob::Vertex> vtx = vertices.at(0);
+              vtx->XYZ(xyz);
+            }
+          }
+      }
     }
 
     out << fixed << setprecision(1);
@@ -838,6 +869,9 @@ namespace wc {
     else if (geomName.Contains("workspace")) {
       geomName = "dune10kt_workspace";
     }
+    else if (geomName.Contains("1x2x6")) {
+      geomName = "dune10kt_hd";
+    }
     else if (geomName.Contains("icarus")) {
       geomName = "icarus";
     }
@@ -856,6 +890,11 @@ namespace wc {
     out << fixed << setprecision(0);
     print_vector(out, vq, "q");
     print_vector(out, vnq, "nq");
+    print_vector(out, pfps, "pfp");
+
+    out << fixed << setprecision(1);
+
+    out << '"' << "vertex" << '"' << ":" << '[' << xyz[0] << ',' << xyz[1] << ',' << xyz[2] << "]," << endl;
 
     out << '"' << "type" << '"' << ":" << '"' << option << '"' << endl;
     out << "}" << endl;
@@ -889,6 +928,9 @@ namespace wc {
     }
     else if (geomName.Contains("workspace")) {
       geomName = "dune10kt_workspace";
+    }
+    else if (geomName.Contains("1x2x6")) {
+      geomName = "dune10kt_hd";
     }
     else if (geomName.Contains("icarus")) {
       geomName = "icarus";
@@ -964,6 +1006,21 @@ namespace wc {
 
   //-----------------------------------------------------------------------
   void CellTree::print_vector(ostream& out, vector<double>& v, TString desc, bool end)
+  {
+    int N = v.size();
+
+    out << '"' << desc << '"' << ":[";
+    for (int i = 0; i < N; i++) {
+      out << v[i];
+      if (i != N - 1) { out << ","; }
+    }
+    out << "]";
+    if (!end) out << ",";
+    out << endl;
+  }
+
+  //-----------------------------------------------------------------------
+  void CellTree::print_vector(ostream& out, vector<int>& v, TString desc, bool end)
   {
     int N = v.size();
 
@@ -1080,7 +1137,7 @@ namespace wc {
     out << fixed << setprecision(1);
     out << "{";
 
-    out << "\"id\":" << id << ",";
+    out << "\"id\":" << i << ",";
     out << "\"text\":"
         << "\"" << PDGName(mc_pdg[i]) << "  " << e << " MeV\",";
     out << "\"data\":{";
@@ -1113,7 +1170,7 @@ namespace wc {
   }
 
   //-----------------------------------------------------------------------
-  void CellTree::DumpMCJSON(ostream& out)
+  void CellTree::DumpMCJSON(const art::Event& event, ostream& out)
   {
     out << "[";
     vector<int> primaries;
@@ -1124,6 +1181,16 @@ namespace wc {
         if (KeepMC(i)) { primaries.push_back(i); }
       }
     }
+
+    for(uint i = 0; i < primaries.size(); i++){
+      std::cout << i << " " << trackIndex[i] << " " << PDGName(mc_pdg[trackIndex[i]]) << std::endl;
+    }
+
+    if(DumpNeutrino(event, primaries, out)){ //Everything should be saved correctly if there is a saved neutrino record
+      return;
+    }
+    //Otherwise do it the normal way.
+
     int size = primaries.size();
     // cout << size << endl;
     for (int i = 0; i < size; i++) {
@@ -1131,6 +1198,59 @@ namespace wc {
     }
 
     out << "]";
+  }
+
+  //-----------------------------------------------------------------------
+  bool CellTree::DumpNeutrino(const art::Event& event, std::vector<int> &primaries, ostream& out)
+  {
+    auto mct = event.getHandle< std::vector<simb::MCTruth> >("generator");
+    if ( !mct ) {
+      mf::LogWarning("CAFMaker") << "No MCTruth.";
+      return false;
+    }
+
+    simb::MCTruth truth = (*mct)[0];
+    simb::MCParticle neutrino = truth.GetNeutrino().Nu();
+
+    std::vector<double> fake_start = {
+      truth.GetNeutrino().Lepton().Vx() - 500*neutrino.Momentum().X()/neutrino.E(),
+      truth.GetNeutrino().Lepton().Vy() - 500*neutrino.Momentum().Y()/neutrino.E(),
+      truth.GetNeutrino().Lepton().Vz() - 500*neutrino.Momentum().Z()/neutrino.E()
+    }; //Fake neutrino origin 5m before the vertex
+
+    out << fixed << setprecision(1);
+    out << "{";
+
+    out << "\"id\":0,";
+    out << "\"text\":"
+        << "\"" << PDGName(neutrino.PdgCode()) << "  " << neutrino.E()*1000 << " MeV\",";
+    out << "\"data\":{";
+    out << "\"traj_x\":[" << fake_start[0] << ", " << truth.GetNeutrino().Lepton().Vx() << "],";
+    out << "\"traj_y\":[" << fake_start[1] << ", " << truth.GetNeutrino().Lepton().Vy() << "],";
+    out << "\"traj_z\":[" << fake_start[2] << ", " << truth.GetNeutrino().Lepton().Vz() << "],";
+    out << "\"start\":[" << fake_start[0] << ", " << fake_start[1] << ", "
+        << fake_start[2] << "],";
+    out << "\"end\":[" << truth.GetNeutrino().Lepton().Vx() << ", " << truth.GetNeutrino().Lepton().Vy() << ", " << truth.GetNeutrino().Lepton().Vz()
+        << "]";
+    out << "},";
+    out << "\"children\":[";
+    int nSavedDaughter = primaries.size();
+    if (nSavedDaughter == 0) {
+      out << "],";
+      out << "\"icon\":"
+          << "\"jstree-file\"";
+      out << "}";
+      return true;
+    }
+    else {
+      for (int j = 0; j < nSavedDaughter; j++) {
+        if (DumpMCJSON(mc_id[primaries.at(j)], out) && j != nSavedDaughter - 1) { out << ","; }
+      }
+      out << "]";
+      out << "}";
+      out << "]";
+      return true;
+    }
   }
 
   //-----------------------------------------------------------------------
@@ -1143,29 +1263,29 @@ namespace wc {
   //-----------------------------------------------------------------------
   bool CellTree::KeepMC(int i)
   {
-    double e = KE(mc_startMomentum[i]) * 1000;
-    double thresh_KE_em = 5.; // MeV
-    double thresh_KE_np = 50; // MeV
-    // cout << "pdg: " << mc_pdg[i] << ", KE: " << e << " MeV, process: " << mc_process[i] << endl;
-    if (mc_process[i] == 8    // muIoni
-        || mc_process[i] == 6 // eBrem
-        || mc_process[i] == 5 // eIoni
-    ) {
-      return false; // skip those ionization and radiation electrons as there are too many to show.
-    }
+    // double e = KE(mc_startMomentum[i]) * 1000;
+    // double thresh_KE_em = 5.; // MeV
+    // double thresh_KE_np = 50; // MeV
+    // // cout << "pdg: " << mc_pdg[i] << ", KE: " << e << " MeV, process: " << mc_process[i] << endl;
+    // if (mc_process[i] == 8    // muIoni
+    //     || mc_process[i] == 6 // eBrem
+    //     || mc_process[i] == 5 // eIoni
+    // ) {
+    //   return false; // skip those ionization and radiation electrons as there are too many to show.
+    // }
 
-    if (mc_pdg[i] == 22 || mc_pdg[i] == 11 || mc_pdg[i] == -11) {
-      if (e >= thresh_KE_em)
-        return true;
-      else
-        return false;
-    }
-    else if (mc_pdg[i] == 2112 || mc_pdg[i] == 2212 || mc_pdg[i] > 1e9) {
-      if (e >= thresh_KE_np)
-        return true;
-      else
-        return false;
-    }
+    // if (mc_pdg[i] == 22 || mc_pdg[i] == 11 || mc_pdg[i] == -11) {
+    //   if (e >= thresh_KE_em)
+    //     return true;
+    //   else
+    //     return false;
+    // }
+    // else if (mc_pdg[i] == 2112 || mc_pdg[i] == 2212 || mc_pdg[i] > 1e9) {
+    //   if (e >= thresh_KE_np)
+    //     return true;
+    //   else
+    //     return false;
+    // }
     return true;
   }
 
