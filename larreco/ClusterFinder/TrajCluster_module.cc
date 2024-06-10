@@ -67,8 +67,7 @@ namespace cluster {
     void GetHits(const std::vector<recob::Hit>& inputHits,
                  const geo::TPCID& tpcid,
                  std::vector<std::vector<unsigned int>>& tpcHits);
-    void GetHits(const std::vector<recob::Hit>& inputHits,
-                 const geo::TPCID& tpcid,
+    void GetHits(const geo::TPCID& tpcid,
                  const std::vector<recob::Slice>& inputSlices,
                  art::FindManyP<recob::Hit>& hitFromSlc,
                  std::vector<std::vector<unsigned int>>& tpcHits,
@@ -302,7 +301,7 @@ namespace cluster {
         if (inputSlices.isValid()) {
           // get hits in this TPC and slice
           art::FindManyP<recob::Hit> hitFromSlc(inputSlices, evt, fSliceModuleLabel);
-          GetHits(*inputHits, tpcid, *inputSlices, hitFromSlc, sltpcHits, slcIDs);
+          GetHits(tpcid, *inputSlices, hitFromSlc, sltpcHits, slcIDs);
         }
         else {
           // get hits in this TPC
@@ -684,12 +683,8 @@ namespace cluster {
             if (clsIndex == clsCol.size()) continue;
             clsIndices.push_back(clsIndex);
           } // tjid
-          if (!util::CreateAssn(*this,
-                                evt,
-                                *pfp_cls_assn,
-                                pfpCol.size() - 1,
-                                clsIndices.begin(),
-                                clsIndices.end())) {
+          if (!util::CreateAssn(
+                evt, *pfp_cls_assn, pfpCol.size() - 1, clsIndices.begin(), clsIndices.end())) {
             throw art::Exception(art::errors::ProductRegistrationFailure)
               << "Failed to associate clusters with PFParticle";
           } // exception
@@ -709,8 +704,7 @@ namespace cluster {
           }   // start vertex exists
           // PFParticle -> Seed
           if (!sedCol.empty()) {
-            if (!util::CreateAssn(*this,
-                                  evt,
+            if (!util::CreateAssn(evt,
                                   pfpCol,
                                   sedCol,
                                   *pfp_sed_assn,
@@ -737,12 +731,8 @@ namespace cluster {
               ++shwIndex[0];
             } // ss3
             if (shwIndex[0] < shwCol.size()) {
-              if (!util::CreateAssn(*this,
-                                    evt,
-                                    *pfp_shwr_assn,
-                                    pfpCol.size() - 1,
-                                    shwIndex.begin(),
-                                    shwIndex.end())) {
+              if (!util::CreateAssn(
+                    evt, *pfp_shwr_assn, pfpCol.size() - 1, shwIndex.begin(), shwIndex.end())) {
                 throw art::Exception(art::errors::ProductRegistrationFailure)
                   << "Failed to associate shower with PFParticle";
               } // exception
@@ -894,8 +884,7 @@ namespace cluster {
   } // GetHits
 
   ////////////////////////////////////////////////
-  void TrajCluster::GetHits(const std::vector<recob::Hit>& inputHits,
-                            const geo::TPCID& tpcid,
+  void TrajCluster::GetHits(const geo::TPCID& tpcid,
                             const std::vector<recob::Slice>& inputSlices,
                             art::FindManyP<recob::Hit>& hitFromSlc,
                             std::vector<std::vector<unsigned int>>& tpcHits,

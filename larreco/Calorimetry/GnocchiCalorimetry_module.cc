@@ -150,9 +150,7 @@ namespace calo {
       const std::vector<const recob::TrackHitMeta*>& thms,
       const recob::Track& track,
       unsigned nplanes);
-    bool HitIsValid(const art::Ptr<recob::Hit> hit,
-                    const recob::TrackHitMeta* thm,
-                    const recob::Track& track);
+    bool HitIsValid(const recob::TrackHitMeta* thm, const recob::Track& track);
     geo::Point_t GetLocation(const recob::Track& track,
                              const art::Ptr<recob::Hit> hit,
                              const recob::TrackHitMeta* meta);
@@ -283,6 +281,10 @@ void calo::GnocchiCalorimetry::produce(art::Event& evt)
         // Get the EField
         double EField = GetEfield(det_prop, track, hits[hit_index], thms[hit_index]);
 
+        // Angle to the drift electric field (in x direction), in units of degrees
+        geo::Vector_t direction = track.DirectionAtPoint(thms[hit_index]->Index());
+        double phi = acos(abs(direction.x())) * 180 / M_PI;
+
         double dQdx = charge / pitch;
 
         // Normalize out the detector response
@@ -301,14 +303,16 @@ void calo::GnocchiCalorimetry::produce(art::Event& evt)
                                           hits[hit_index]->PeakTime(),
                                           hits[hit_index]->WireID().Plane,
                                           T0,
-                                          EField) :
+                                          EField,
+                                          phi) :
                         fCaloAlg.dEdx_AREA(clock_data,
                                            det_prop,
                                            dQdx,
                                            hits[hit_index]->PeakTime(),
                                            hits[hit_index]->WireID().Plane,
                                            T0,
-                                           EField);
+                                           EField,
+                                           phi);
 
         // save the length between each pair of hits
         if (xyzs.size() == 0) { lengths.push_back(0.); }
@@ -417,7 +421,7 @@ std::vector<std::vector<OrganizedHits>> calo::GnocchiCalorimetry::OrganizeHitsIn
 {
   std::vector<std::vector<OrganizedHits>> ret(nplanes);
   for (unsigned i = 0; i < hits.size(); i++) {
-    if (HitIsValid(hits[i], thms[i], track)) { ret[hits[i]->WireID().Plane].push_back({i, {}}); }
+    if (HitIsValid(thms[i], track)) { ret[hits[i]->WireID().Plane].push_back({i, {}}); }
   }
 
   return ret;
@@ -461,7 +465,7 @@ std::vector<std::vector<OrganizedHits>> calo::GnocchiCalorimetry::OrganizeHitsSn
   std::vector<std::vector<OrganizedHits>> ret(nplanes);
   std::vector<std::vector<HitIdentifier>> hit_idents(nplanes);
   for (unsigned i = 0; i < hits.size(); i++) {
-    if (HitIsValid(hits[i], thms[i], track)) {
+    if (HitIsValid(thms[i], track)) {
       HitIdentifier this_ident(*hits[i]);
 
       // check if we have found a hit on this snippet before
@@ -490,13 +494,10 @@ std::vector<std::vector<OrganizedHits>> calo::GnocchiCalorimetry::OrganizeHitsSn
   return ret;
 }
 
-bool calo::GnocchiCalorimetry::HitIsValid(const art::Ptr<recob::Hit> hit,
-                                          const recob::TrackHitMeta* thm,
-                                          const recob::Track& track)
+bool calo::GnocchiCalorimetry::HitIsValid(const recob::TrackHitMeta* thm, const recob::Track& track)
 {
   if (thm->Index() == int_max_as_unsigned_int) return false;
-  if (!track.HasValidPoint(thm->Index())) return false;
-  return true;
+  return track.HasValidPoint(thm->Index());
 }
 
 geo::Point_t calo::GnocchiCalorimetry::GetLocation(const recob::Track& track,
